@@ -81,6 +81,7 @@ void simulate_fire(int N, vector<int>& globalGrid, int iproc, int nproc,
                 int idx = i * N + j;
                 int current = globalGrid[idx];
                 int newState = current;
+                
                 if (current == TREE) {
                     bool neighborBurning = false;
                     if (i > 0 && globalGrid[(i - 1) * N + j] == BURNING)
@@ -91,8 +92,10 @@ void simulate_fire(int N, vector<int>& globalGrid, int iproc, int nproc,
                         neighborBurning = true;
                     if (j < N - 1 && globalGrid[i * N + (j + 1)] == BURNING)
                         neighborBurning = true;
-                    if (neighborBurning)
+                    
+                    if (neighborBurning) {
                         newState = BURNING;
+                    }
                 } else if (current == BURNING) {
                     newState = DEAD;
                 }
@@ -120,33 +123,34 @@ void simulate_fire(int N, vector<int>& globalGrid, int iproc, int nproc,
                        MPI_INT, MPI_COMM_WORLD);
         globalGrid = newGlobalGrid;
         
-        // Check if any cell is burning.
-        bool localBurning = false;
-        for (int i = i0; i < i1 && !localBurning; i++) {
+        // Check if any cell is burning. Use an int for localBurning.
+        int localBurning = 0;
+        for (int i = i0; i < i1 && localBurning == 0; i++) {
             for (int j = 0; j < N; j++) {
                 if (globalGrid[i * N + j] == BURNING) {
-                    localBurning = true;
+                    localBurning = 1;
                     break;
                 }
             }
         }
-        bool globalBurning = false;
-        MPI_Allreduce(&localBurning, &globalBurning, 1, MPI_C_BOOL, MPI_LOR, MPI_COMM_WORLD);
-        fireStillBurning = globalBurning;
+        int globalBurning = 0;
+        // Summation of burning flags
+        MPI_Allreduce(&localBurning, &globalBurning, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        fireStillBurning = (globalBurning > 0);
         
         // Check if fire reached the bottom row.
-        bool localBottom = false;
-        if (i1 == N) {  // Only the process with the bottom row checks.
+        int localBottom = 0;
+        if (i1 == N) {
             for (int j = 0; j < N; j++) {
                 if (globalGrid[(N - 1) * N + j] == BURNING) {
-                    localBottom = true;
+                    localBottom = 1;
                     break;
                 }
             }
         }
-        bool globalBottom = false;
-        MPI_Allreduce(&localBottom, &globalBottom, 1, MPI_C_BOOL, MPI_LOR, MPI_COMM_WORLD);
-        if (globalBottom)
+        int globalBottom = 0;
+        MPI_Allreduce(&localBottom, &globalBottom, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        if (globalBottom > 0)
             fireReachedBottom = true;
         
         steps++;
@@ -173,10 +177,8 @@ int main(int argc, char** argv) {
     int M = atoi(argv[3]);
     string inputFile = "";
     string outputFile = "final_grid.txt";
-    if (argc >= 5)
-        inputFile = argv[4];
-    if (argc >= 6)
-        outputFile = argv[5];
+    if (argc >= 5) inputFile = argv[4];
+    if (argc >= 6) outputFile = argv[5];
     
     double t_start = MPI_Wtime();
     int totalSteps = 0;
@@ -214,7 +216,7 @@ int main(int argc, char** argv) {
         if (fireReachedBottom)
             runsFireReachedBottom++;
         
-        // On the last run, the root writes the final grid to file.
+        // On the last run, root writes the final grid to file.
         if (run == M - 1 && iproc == 0)
             write_grid(outputFile, globalGrid, N);
     }
